@@ -161,6 +161,37 @@ class InvenTreeSetting(models.Model):
             'description': _('Prefix value for purchase order reference'),
             'default': 'PO',
         },
+        
+        'DIGIKEY_ACCESS_TOKEN': {
+            'name': _('Digikey Access token from auth response'),
+            'description': _('Access token for API'),
+            'default': 'api-token',
+        },
+        
+        'DIGIKEY_CLIENT_ID': {
+            'name': _('Digikey API Client ID'),
+            'description': _('Client ID for API'),
+            'default': 'client-id',
+        },
+        
+        'DIGIKEY_CLIENT_SECRET': {
+            'name': _('Digikey API Client Secret'),
+            'description': _('Client Secret for API'),
+            'default': 'client-secret',
+        },
+        
+        'DIGIKEY_REFRESH_TOKEN': {
+            'name': _('Digikey API Refresh Token'),
+            'description': _('Refresh Token for API'),
+            'default': 'refresh-token',
+        },
+        
+        'DIGIKEY_TOKEN_EXPIRATION': {
+            'name': _('Digikey API Token Expiration'),
+            'description': _('Token Expiration DTS for API'),
+            'default': 0,
+        },
+        
     }
 
     class Meta:
@@ -342,6 +373,34 @@ class InvenTreeSetting(models.Model):
             value = backup_value
 
         return value
+
+    @classmethod
+    def set_setting_force(cls, key, value, create=True):
+        """
+        Set the value of a particular setting.
+        If it does not exist, option to create it.
+
+        Args:
+            key: settings key
+            value: New value
+            create: If True, create a new setting if the specified key does not exist.
+        """
+
+        try:
+            setting = InvenTreeSetting.objects.get(key__iexact=key)
+        except InvenTreeSetting.DoesNotExist:
+
+            if create:
+                setting = InvenTreeSetting(key=key)
+            else:
+                return
+
+        # Enforce standard boolean representation
+        if setting.is_bool():
+            value = InvenTree.helpers.str2bool(value)
+            
+        setting.value = str(value)
+        setting.save()
 
     @classmethod
     def set_setting(cls, key, value, user, create=True):
