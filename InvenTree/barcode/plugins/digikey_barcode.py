@@ -15,9 +15,9 @@ import common.models
 
 from barcode.barcode import BarcodePlugin
 
-from stock.models import StockItem, StockLocation, StockModels
+from stock.models import StockItem, StockLocation
 from part.models import Part
-
+from stock import models as StockModels
 from company.models import Company, SupplierPart
 
 from rest_framework.exceptions import ValidationError
@@ -38,7 +38,14 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
     PLUGIN_NAME = "DigikeyBarcode"
 
-    def __init__(self):
+    def __init__(self, barcode_data):
+        """
+        Initialize the BarcodePlugin instance
+
+        Args:
+            barcode_data - The raw barcode data
+        """
+        self.data = barcode_data
         self.client_id = ""
         self.access_token = ""
         self.refresh_token = ""
@@ -48,7 +55,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         self.client_secret = ""
         self.api_url = DEFAULT_API_URL
         self.valid = False
-        self.debug = False
+        self.debug = True
         self.rs_str = "\x1e"
         self.gs_str = "\x1d"
         self.eot_str = "\x04"
@@ -58,13 +65,13 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         self.__update_config()
         
     def __update_config(self):
-        self.client_id = common.models.InvenTreeSetting.get_setting('DIGIKEY_CLIENT_ID')
-        self.access_token = common.models.InvenTreeSetting.get_setting('DIGIKEY_ACCESS_TOKEN')
-        self.refresh_token = common.models.InvenTreeSetting.get_setting('DIGIKEY_REFRESH_TOKEN')
-        self.token_expiration = common.models.InvenTreeSetting.get_setting('DIGIKEY_TOKEN_EXPIRATION')
-        self.client_secret = common.models.InvenTreeSetting.get_setting('DIGIKEY_CLIENT_SECRET')
+        self.client_id = common.models.InvenTreeSetting.get_setting("DIGIKEY_CLIENT_ID")
+        self.access_token = common.models.InvenTreeSetting.get_setting("DIGIKEY_ACCESS_TOKEN")
+        self.refresh_token = common.models.InvenTreeSetting.get_setting("DIGIKEY_REFRESH_TOKEN")
+        self.token_expiration = common.models.InvenTreeSetting.get_setting("DIGIKEY_TOKEN_EXPIRATION")
+        self.client_secret = common.models.InvenTreeSetting.get_setting("DIGIKEY_CLIENT_SECRET")
         
-        if common.models.InvenTreeSetting.get_setting_default() != self.access_token:
+        if common.models.InvenTreeSetting.get_setting_default("DIGIKEY_ACCESS_TOKEN") != self.access_token:
             self.valid = True
 
             if int(self.token_expiration) < time.time():
@@ -106,9 +113,9 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             )
             
             # Store the new tokens in settings please
-            common.models.InvenTreeSetting.set_setting_force('DIGIKEY_ACCESS_TOKEN', self.access_token )
-            common.models.InvenTreeSetting.set_setting_force('DIGIKEY_REFRESH_TOKEN' self.refresh_token)
-            common.models.InvenTreeSetting.set_setting_force('DIGIKEY_TOKEN_EXPIRATION', self.token_expiration)
+            common.models.InvenTreeSetting.set_setting_force("DIGIKEY_ACCESS_TOKEN", self.access_token )
+            common.models.InvenTreeSetting.set_setting_force("DIGIKEY_REFRESH_TOKEN", self.refresh_token)
+            common.models.InvenTreeSetting.set_setting_force("DIGIKEY_TOKEN_EXPIRATION", self.token_expiration)
             
         elif self.debug:
             print("ERROR")
@@ -147,7 +154,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.debug:
                 print("Unauthorized! Need to refresh token.")
             return None
-        else
+        else:
             return data
 
     def process_2d_barcode(self, barcode):
@@ -176,7 +183,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.debug:
                 print("Unauthorized! Need to refresh token.")
             return None
-        else
+        else:
             return data
 
     def decode_2d_barcode(self, barcode):
@@ -192,7 +199,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             raise ValueError({barcode, "Not an ISO IEC 15434 Code"})
 
         self.fields = {}
-        sections = barcode.split(gs_str)
+        sections = barcode.split(self.gs_str)
         for section in sections[1:]:
             match = ansi_mh10_8_2_item.match(section)
             if match:
@@ -208,8 +215,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
         return self.fields
 
-
-    def get_part_details(self, part_no)
+    def get_part_details(self, part_no):
         self.__update_config()
 
         conn = http.client.HTTPSConnection(self.api_url)
@@ -236,7 +242,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.debug:
                 print("Unauthorized! Need to refresh token.")
             return None
-        else
+        else:
             return data
         
     def validate(self):
@@ -250,33 +256,22 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
         """
         input_ok = False
-        # The data must either be dict or be able to dictified
-        if type(self.data) is dict:
-            pass
-        elif type(self.data) is str:
-            try:
-                self.data = json.loads(self.data)
-                if type(self.data) is not dict:
-                    return False
-            except json.JSONDecodeError:
-                return False
-        else:
-            return False
-            
         # If any of the following keys are in the JSON data,
         # let's go ahead and assume that the code is a valid InvenTree one...
         digikey_data = None
-        
-        if 'digikeypartnumber' in self.data:
+       
+        if type(self.data) is dict and 'digikeypartnumber' in self.data:
             digikey_data = self.get_part_details(self.data['digikeypartnumber'])
-            
-        elif 'barcode' in self.data:
-            barcode = self.data['barcode']
-         
+        else:
+            if type(self.data) is dict and 'barcode' in self.data:
+                barcode = self.data['barcode']
+            if type(self.data) is str:
+                barcode = self.data
+
             try:
                
                 # Try to decode barcode to see if it's a valid 2d barcode
-                decode_2d_barcode(barcode)
+                self.decode_2d_barcode(barcode)
 
                 # Convert escape character strings back into raw format for digikey
                 barcode = barcode.replace(self.rs_str, "\x1e")
@@ -288,8 +283,6 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 digikey_data = self.process_barcode(barcode)
 
             self.scan_barcode = barcode
-        else
-            raise ValidationError({k: "No barcode or digikeypartnumber specified"})
         
         if self.debug:
             print(digikey_data)
@@ -308,76 +301,78 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 self.manu_number = digikey_data["ManufacturerPartNumber"]
                 self.part_data = digikey_data
             else:
-                raise ValidationError({k: "No part data returned"})
+                raise ValidationError({self.barcode: "No part data returned"})
         else:
-            raise ValidationError({k: "Return data is none-dict"})
+            raise ValidationError({self.barcode: "Return data is none-dict"})
       
         return True
 
     def getStockItem(self):
         part_number_none = False
         try:
-            if !self.part_number is None:
+            if not self.part_number is None:
                 try:
                     supplier_part = SupplierPart.objects.get(SKU=self.part_number)
-                    stock = StockModels.StockItem.objects.filter(part__in=supplier_part.part)
+                    stock = StockModels.StockItem.objects.filter(part=supplier_part.part)
                     return stock[0]
                 except (ValueError, SupplierPart.DoesNotExist):
                     part_number_none = True
                    
-            if !self.manu_number is None:
+            if not self.manu_number is None:
                 try:
                     supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
-                    stock = StockModels.StockItem.objects.filter(part__in=supplier_part.part)
+                    stock = StockModels.StockItem.objects.filter(part=supplier_part.part)
                     return stock[0]
                 except (ValueError, SupplierPart.DoesNotExist):
-                    raise ValidationError({k, 'ManufacturerPartNumber does not exist'})
+                    raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})
         except (ValueError, StockItem.DoesNotExist):
-            raise ValidationError({k, "Stock item does not exist"})
+            raise ValidationError({self.part_number, "Stock item does not exist"})
             
         if part_number_none:
-            raise ValidationError({k, 'Supplier Part Number does not exist'})
+            raise ValidationError({self.barcode, 'Supplier Part Number does not exist'})
 
     def getStockLocation(self):
         part_number_none = False
         supplier_part = None
-        if !self.part_number is None:
+        if not self.part_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(SKU=self.part_number)
             except (ValueError, SupplierPart.DoesNotExist):
                 part_number_none = True
                
-        if !self.manu_number is None:
+        if not self.manu_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
             except (ValueError, SupplierPart.DoesNotExist):
-                raise ValidationError({k, 'ManufacturerPartNumber does not exist'})
+                raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})
 
-        try:
-            location = StockLocation.objects.get(pk=supplier_part.part.default_location.id)
-            return location
-        except StockLocation.DoesNotExist:
-            raise ValidationError({k, 'StockLocation does not exist'})
+        if not supplier_part is None:
+            try:
+                location = StockLocation.objects.get(pk=supplier_part.part.default_location.id)
+                return location
+            except StockLocation.DoesNotExist:
+                raise ValidationError({self.manu_number, 'StockLocation does not exist'})
 
         return None
 
     def getPart(self):
         part_number_none = False
-        if !self.part_number is None:
+        if not self.part_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(SKU=self.part_number)
                 return supplier_part.part
             except (ValueError, SupplierPart.DoesNotExist):
                 part_number_none = True
                
-        if !self.manu_number is None:
+        if not self.manu_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
                 return supplier_part.part
             except (ValueError, SupplierPart.DoesNotExist):
-                raise ValidationError({k, 'ManufacturerPartNumber does not exist'})
+                raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})
+
 
         if part_number_none:
-            raise ValidationError({k, 'Supplier Part Number does not exist'})
+            raise ValidationError({self.part_number, 'Supplier Part Number does not exist'})
 
         return None

@@ -35,7 +35,6 @@ class InvenTreeBarcodePlugin(BarcodePlugin):
         }
 
         """
-
         # The data must either be dict or be able to dictified
         if type(self.data) is dict:
             pass
