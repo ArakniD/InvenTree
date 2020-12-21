@@ -97,7 +97,23 @@ class BarcodePlugin:
         """
 
         return None
+        
+    def addPart(self):
+        """
+        Attempt to add a Part and SupplierPart associated with this barcode.
+        Default implementation returns None
+        """
 
+        return None
+    
+    def addStockItem(self):
+        """
+        Attempt to add a Stock Item for this barcode
+        Default implementation returns None
+        """
+
+        return None
+    
     def renderPart(self, part):
         """
         Render a part to JSON response

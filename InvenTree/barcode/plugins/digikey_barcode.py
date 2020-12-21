@@ -61,6 +61,9 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         self.eot_str = "\x04"
         self.scan_barcode = ""
         self.reduced_barcode = ""
+        self.salesorder_id = ""
+        self.invoice_id = ""
+        self.purchase_order = ""
         self.part_data = None
         self.__update_config()
         
@@ -299,6 +302,9 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 self.part_barcode = "\x1d".join(new_code) + "\x04"
                 self.part_number = digikey_data["DigiKeyPartNumber"]
                 self.manu_number = digikey_data["ManufacturerPartNumber"]
+                self.salesorder_id = digikey_data["SalesorderId"]
+                self.invoice_id = digikey_data["InvoiceId"]
+                self.purchase_order = digikey_data["PurchaseOrder"]
                 self.part_data = digikey_data
             else:
                 raise ValidationError({self.barcode: "No part data returned"})
@@ -309,20 +315,26 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
     def getStockItem(self):
         part_number_none = False
+        company = None
+        try
+            company = Company.objects.get(name='DigiKey')
+        except (ValueError, Company.DoesNotExist):
+            return None
+            
         try:
             if not self.part_number is None:
                 try:
                     supplier_part = SupplierPart.objects.get(SKU=self.part_number)
-                    stock = StockModels.StockItem.objects.filter(part=supplier_part.part)
-                    return stock[0]
+                    stock = StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.salesorder_id.join("-").join(self.invoice_id))
+                    return stock
                 except (ValueError, SupplierPart.DoesNotExist):
                     part_number_none = True
                    
             if not self.manu_number is None:
                 try:
-                    supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
-                    stock = StockModels.StockItem.objects.filter(part=supplier_part.part)
-                    return stock[0]
+                    supplier_part = SupplierPart.objects.get(MPN=self.manu_number,supplier=company)
+                    stock = StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.salesorder_id.join("-").join(self.invoice_id))
+                    return stock
                 except (ValueError, SupplierPart.DoesNotExist):
                     raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})
         except (ValueError, StockItem.DoesNotExist):
@@ -331,9 +343,44 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         if part_number_none:
             raise ValidationError({self.barcode, 'Supplier Part Number does not exist'})
 
+    def addStockItem(self):
+        company = None
+        supplierPart = None
+        stock = None
+        try
+            company = Company.objects.get(name='DigiKey')
+        except (ValueError, Company.DoesNotExist):
+            return None
+    
+     # Try get SupplierPart before create SupplierPart
+        try
+            supplierPart = SupplierPart.objects.get(MPN=self.manu_number)
+        except (ValueError, SupplierPart.DoesNotExist):
+            return None
+
+        if "Quantity" in self.part_data and "SalesorderId" in self.part_data and "InvoiceId" in self.part_data:
+            try:
+                stock = StockModels.StockItem.objects.get(part=supplierPart.part,batch=self.salesorder_id.join("-").join(self.invoice_id))
+            except (ValueError, StockItem.DoesNotExist):
+                stock = StockModels.StockItem.objects.create(
+                    part = supplierPart.part,
+                    supplier_part = supplierPart,
+                    batch = self.salesorder_id.join("-").join(self.invoice_id),
+                    quantity = self.part_data["Quantity"],
+                )
+
+        return stock
+
     def getStockLocation(self):
         part_number_none = False
         supplier_part = None
+        company = None
+        
+        try
+            company = Company.objects.get(name='DigiKey')
+        except (ValueError, Company.DoesNotExist):
+            return None
+        
         if not self.part_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(SKU=self.part_number)
@@ -342,7 +389,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                
         if not self.manu_number is None:
             try:
-                supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
+                supplier_part = SupplierPart.objects.get(MPN=self.manu_number,supplier=company)
             except (ValueError, SupplierPart.DoesNotExist):
                 raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})
 
@@ -355,8 +402,66 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
         return None
 
+    def addPart(self):
+        company = None
+        manufacturer = None
+        part = None
+        
+        try
+            company = Company.objects.get(name='DigiKey')
+        except (ValueError, Company.DoesNotExist):
+            return None
+        
+        # Try get Manu before Create Manu
+        try
+            manufacturer = Company.objects.get(name=self.part_data["ManufacturerName"])
+        except (ValueError, Company.DoesNotExist):
+            manufacturer = Company.objects.create( 
+                name=self.part_data["ManufacturerName"],
+                is_customer = False,
+                is_supplier = False,
+                is_manufacturer = True
+            )  
+    
+        if not self.part_number is None and not self.manu_number is None:
+            # Try get Part before Create Part
+            try
+                part = Part.objects.get(name=self.part_data["ManufacturerPartNumber"])
+            except (ValueError, Part.DoesNotExist):
+                part = Part.objects.create(
+                    name=self.part_data["ManufacturerPartNumber"],
+                    description=self.part_data["ProductDescription"],
+                    component=True,
+                    purchaseable=True,
+                    trackable=False,
+                    active=True,
+                    virtual=False,
+                    default_supplier=company
+                )
+            
+            # Try get SupplierPart before create SupplierPart
+            try
+                supplierPart = SupplierPart.objects.get(MPN=self.manu_number)
+            except (ValueError, SupplierPart.DoesNotExist):
+                supplierPart = SupplierPart.objects.create(
+                    part = part,
+                    SKU = self.part_number,
+                    MPN = self.manu_number,
+                    supplier = company,
+                    manufacturer = manufacturer
+                )
+
+        return part
+
     def getPart(self):
         part_number_none = False
+        company = None
+        
+        try
+            company = Company.objects.get(name='DigiKey')
+        except (ValueError, Company.DoesNotExist):
+            return None
+            
         if not self.part_number is None:
             try:
                 supplier_part = SupplierPart.objects.get(SKU=self.part_number)
@@ -366,7 +471,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                
         if not self.manu_number is None:
             try:
-                supplier_part = SupplierPart.objects.get(MPN=self.manu_number)
+                supplier_part = SupplierPart.objects.get(MPN=self.manu_number,supplier=company)
                 return supplier_part.part
             except (ValueError, SupplierPart.DoesNotExist):
                 raise ValidationError({self.manu_number, 'ManufacturerPartNumber does not exist'})

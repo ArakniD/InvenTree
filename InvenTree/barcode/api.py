@@ -96,6 +96,9 @@ class BarcodeScan(APIView):
             # Try to associate with a part
             part = plugin.getPart()
 
+            if part is None:
+                part = plugin.addPart()
+
             if part is not None:
                 response['part'] = plugin.renderPart(part)
                 response['url'] = reverse('part-detail', kwargs={'pk': part.id})
