@@ -98,7 +98,7 @@ class BarcodePlugin:
 
         return None
         
-    def addPart(self):
+    def addPart(self,request):
         """
         Attempt to add a Part and SupplierPart associated with this barcode.
         Default implementation returns None
@@ -106,7 +106,7 @@ class BarcodePlugin:
 
         return None
     
-    def addStockItem(self):
+    def addStockItem(self,request):
         """
         Attempt to add a Stock Item for this barcode
         Default implementation returns None

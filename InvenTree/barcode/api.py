@@ -59,6 +59,8 @@ class BarcodeScan(APIView):
         # Look for a barcode plugin which knows how to deal with this barcode
         plugin = None
 
+        print("0202020202")
+        
         for plugin_class in plugins:
             plugin_instance = plugin_class(barcode_data)
 
@@ -73,9 +75,24 @@ class BarcodeScan(APIView):
 
         # A plugin has been found!
         if plugin is not None:
+            part = plugin.getPart()
+
+            # Add the part if it doesnt exit
+            if part is None:
+                part = plugin.addPart(request.user)
             
+            # Now that it exists Link to it
+            if part is not None:
+                response['part'] = plugin.renderPart(part)
+                response['url'] = reverse('part-detail', kwargs={'pk': part.id})
+                match_found = True
+
             # Try to associate with a stock item
             item = plugin.getStockItem()
+
+            # If not stock item, add the stick item if this entry has data
+            if item is None:
+                item = plugin.addStockItem(request.user)
 
             if item is None:
                 item = plugin.getStockItemByHash()
@@ -91,17 +108,6 @@ class BarcodeScan(APIView):
             if loc is not None:
                 response['stocklocation'] = plugin.renderStockLocation(loc)
                 response['url'] = reverse('stock-location-detail', kwargs={'pk': loc.id})
-                match_found = True
-
-            # Try to associate with a part
-            part = plugin.getPart()
-
-            if part is None:
-                part = plugin.addPart()
-
-            if part is not None:
-                response['part'] = plugin.renderPart(part)
-                response['url'] = reverse('part-detail', kwargs={'pk': part.id})
                 match_found = True
 
             response['hash'] = plugin.hash()
