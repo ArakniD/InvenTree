@@ -57,7 +57,58 @@ function enableBarcodeInput(modal, enabled=true) {
     
     modalEnable(modal, enabled);
 
+    barcodeScanner(modal, !enabled);
+
     barcode.focus();
+}
+
+function recreateNode(el, withChildren) {
+  if (withChildren) {
+    el.parentNode.replaceChild(el.cloneNode(true), el);
+  }
+  else {
+    var newEl = el.cloneNode(false);
+    while (el.hasChildNodes()) newEl.appendChild(el.firstChild);
+    el.parentNode.replaceChild(newEl, el);
+  }
+}
+
+const codeReader =  new ZXingBrowser.BrowserMultiFormatReader();
+
+function barcodeScanner(modal, enable) {
+
+    if (enable) {
+		document.getElementById('startButton').addEventListener('click', () => {
+			const previewElem = document.getElementById('barcode-webcam');
+			
+			// you can use the controls to stop() the scan or switchTorch() if available
+			codeReader.decodeFromVideoDevice(undefined, previewElem, (result, error, controls) => {
+				// use the result and error values to choose your actions
+				// you can also use controls API in this scope like the controls
+				// returned from the method.
+				if (result) {
+					modal = modal || '#modal-form';
+					var el = $(modal + ' #barcode');
+					var barcode = el.val(result.text);
+
+					console.log(result)
+					
+					options.onScan(result.text)
+                		}
+				
+			});
+			console.log('ZXing code reader initialized')
+		})
+		document.getElementById('resetButton').addEventListener('click', () => {
+			modal = modal || '#modal-form';
+			var el = $(modal + ' #barcode');
+			var barcode = el.val('');
+			console.log('stopping scanner')
+			//codeReader.stop()
+		})
+    } else if (codeReader) {
+        //codeReader.stop()
+    }
 }
 
 function getBarcodeData(modal) {
@@ -73,7 +124,6 @@ function getBarcodeData(modal) {
 
     return barcode.trim();
 }
-
 
 function barcodeDialog(title, options={}) {
     /*
@@ -94,7 +144,7 @@ function barcodeDialog(title, options={}) {
     }
 
     $(modal).on('shown.bs.modal', function() {
-        $(modal + ' .modal-form-content').scrollTop(0);
+	$(modal + ' .modal-form-content').scrollTop(0);
         
         var barcode = $(modal + ' #barcode');
 
@@ -127,57 +177,7 @@ function barcodeDialog(title, options={}) {
         if (options.onShow) {
             options.onShow();
         }
-		// window.addEventListener('load', function () {
-		{
-			let selectedDeviceId;
-			const codeReader = new ZXing.BrowserMultiFormatReader();
-			console.log('ZXing code reader initialized');
-			codeReader.listVideoInputDevices();
-			.then((videoInputDevices) => {
-			  const sourceSelect = document.getElementById('sourceSelect')
-			  selectedDeviceId = videoInputDevices[0].deviceId
-			  if (videoInputDevices.length >= 1) {
-				videoInputDevices.forEach((element) => {
-				  const sourceOption = document.createElement('option');
-				  sourceOption.text = element.label;
-				  sourceOption.value = element.deviceId;
-				  sourceSelect.appendChild(sourceOption)
-				})
-
-				sourceSelect.onchange = () => {
-				  selectedDeviceId = sourceSelect.value;
-				};
-
-				const sourceSelectPanel = document.getElementById('sourceSelectPanel');
-				sourceSelectPanel.style.display = 'block';
-			  }
-
-			  document.getElementById('startButton').addEventListener('click', () => {
-				codeReader.decodeFromVideoDevice(selectedDeviceId, 'video', (result, err) => {
-				  if (result) {
-					console.log(result);
-					barcode.textContent = result.text;
-				  }
-				  if (err && !(err instanceof ZXing.NotFoundException)) {
-					console.error(err);
-				  }
-				})
-				console.log(`Started continous decode from camera with id ${selectedDeviceId}`)
-			  })
-
-			  document.getElementById('resetButton').addEventListener('click', () => {
-				codeReader.reset();
-				barcode.textContent = '';
-				console.log('Reset.');
-			  })
-
-			})
-			.catch((err) => {
-			  console.error(err);
-			})
-
-    }//);
-
+    })
     modalSetTitle(modal, title);
 
     if (options.onSubmit) {
@@ -186,22 +186,34 @@ function barcodeDialog(title, options={}) {
         modalShowSubmitButton(modal, false);
     }
 
+    barcodeScanner(modal, false)
+
     var content = '';
 
-	content += `<script type="text/javascript" src="https://unpkg.com/@zxing/library@latest"></script>`;
-    content += `<div class='alert alert-info alert-block'>{% trans "Scan barcode data below" %}</div>`;
+    content += `<div class='alert alert-info alert-block'>Scan barcode data below</div>`;
     
     content += `<div id='barcode-error-message'></div>`;
-    content += `<form class='js-modal-form' method='post'>`;
-	
-	content += `<div><a class="button" id="startButton">Start</a><a class="button" id="resetButton">Reset</a></div>`;
-	content += `<div><video id="video" width="300" height="200" style="border: 1px solid gray"></video></div>`;
-	content += `<div id="sourceSelectPanel" style="display:none">`;
-	content += `  <label for="sourceSelect">Change video source:</label>`;
-	content += `  <select id="sourceSelect" style="max-width:400px"></select>`;
-	content += `</div>`;
+    content += `<div><a class="button" id="startButton">Start</a><a class="button" id="resetButton">Reset</a></div>`;
     
-    // Optional content before barcode input
+    content += `<style>`;
+    content += `#interactive.viewport {`;
+ content += `	position: relative;`;
+ content += `}`;
+ content += `#interactive.viewport > canvas, #interactive.viewport > video {`;
+ content += `	max-width: 100%;`;
+ content += `	width: 100%;`;
+ content += `}`;
+ content += `@media (-webkit-video-playable-inline) {`;
+ content += `	#interactive img { display: none; }`;
+ content += `	#interactive video { display: initial; }`;
+ content += `}`;
+ content += `</style>`;
+ content += `<div id="interactive" class="viewport">`;
+ content += `	<video id="barcode-webcam" autoplay="true" preload="auto" src="" playsinline></video>`;
+ content += `</div>`;	
+	
+    content += `<form class='js-modal-form' method='post'>`;
+	// Optional content before barcode input
     content += `<div class='container' id='barcode-header'>`;
     content += options.headerContent || '';
     content += `</div>`;
@@ -231,7 +243,10 @@ function barcodeDialog(title, options={}) {
     }
 
     $(modal).modal('show');
+
+    barcodeScanner(modal,true);
 }
+
 
 
 function barcodeScanDialog() {
