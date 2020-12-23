@@ -59,12 +59,12 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         self.rs_str = "\x1e"
         self.gs_str = "\x1d"
         self.eot_str = "\x04"
+        self.part_data = None
+        self.barcode_data = None
         self.scan_barcode = ""
-        self.reduced_barcode = ""
         self.salesorder_id = None
         self.invoice_id = None
         self.purchase_order = None
-        self.part_data = None
         self.batch_id = ""
         self.quantity = 0
         self.__update_config()
@@ -255,85 +255,90 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         An "DigiKey" barcode must be a jsonnable-dict with the following tags:
 
         {
-            'barcode': 'DigiKey',
-            'digikeypartnumber': '2ND-3303003-3-ND',
+            'barcode': '1D/2D DigiKey barcode',
+            'partnumber': '2ND-3303003-3-ND',
         }
 
         """
-        input_ok = False
         # If any of the following keys are in the JSON data,
         # let's go ahead and assume that the code is a valid InvenTree one...
-        digikey_data = None
-       
-        if type(self.data) is dict and 'digikeypartnumber' in self.data:
-            digikey_data = self.get_part_details(self.data['digikeypartnumber'])
+        barcode_data = None
+
+        if type(self.data) is dict and 'partnumber' in self.data:
+            self.part_data = self.get_part_details(self.data['partnumber'])
+
+            if self.part_data is None:
+                return False
+
+            self.manu_number=part_data["ManufacturerPartNumber"]
+            self.part_number=part_data["DigiKeyPartNumber"]
+            
         else:
             if type(self.data) is dict and 'barcode' in self.data:
                 barcode = self.data['barcode']
-            if type(self.data) is str:
+            elif type(self.data) is str:
                 barcode = self.data
+            else:
+                raise ValidationError({self.data: "Unknown input"})
+
+            self.scan_barcode = barcode
 
             try:
                
                 # Try to decode barcode to see if it's a valid 2d barcode
-                self.decode_2d_barcode(barcode)
+                fields = self.decode_2d_barcode(barcode)
 
-                # Convert escape character strings back into raw format for digikey
-                barcode = barcode.replace(self.rs_str, "\x1e")
-                barcode = barcode.replace(self.gs_str, "\x1d")
-                barcode = barcode.replace(self.eot_str, "\x04")
-
-                digikey_data = self.process_barcode(barcode)
-            except ValueError:
-                digikey_data = self.process_barcode(barcode)
-
-            self.scan_barcode = barcode
-        
-        if self.debug:
-            print(digikey_data)
-
-        if type(digikey_data) is dict:
-            if "ProductDescription" in digikey_data and "ManufacturerPartNumber" in digikey_data and "DigiKeyPartNumber" in digikey_data:
-                new_code = [
-                    "[)>\x1e06",
-                    "1P" + digikey_data["ManufacturerPartNumber"],
-                    "P" + digikey_data["DigiKeyPartNumber"],
-                ]
-
-                # Add GS delimiters and EOT at the end
-                self.part_barcode = "\x1d".join(new_code) + "\x04"
-                self.part_number = digikey_data["DigiKeyPartNumber"]
-                self.manu_number = digikey_data["ManufacturerPartNumber"]
-                self.salesorder_id = int(digikey_data["SalesorderId"])
-                self.invoice_id = int(digikey_data["InvoiceId"])
-                self.purchase_order = digikey_data["PurchaseOrder"]
+                self.purchase_order = fields["Customer PO Number"]
+                self.salesorder_id = fields["Supplier Order Number"]
+                self.invoice_id = fields["Invoice Number"]
+                self.part_number = fields["Part No."]
+                self.manu_number = fields["Supplier Part Number"]
+                self.quantity = int(fields["Quantity"])
                 self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
-                self.quantity = int(digikey_data["Quantity"])
-                self.part_data = digikey_data
-            else:
-                raise ValidationError({self.barcode: "No part data returned"})
-        else:
-            raise ValidationError({self.barcode: "Return data is none-dict"})
-        
-        print("All Good")
+
+            except (ValueError, KeyError):
+                try:
+                    self.barcode_data = self.process_barcode(barcode)
+
+                    if self.barcode_data is None:
+                        raise ValidationError({self.scan_barcode: "Return data is none-dict"})
+
+                    if self.debug:
+                        print(self.barcode_data)
+
+                    new_code = [
+                        "[)>\x1e06",
+                        "1P" + self.barcode_data["ManufacturerPartNumber"],
+                        "P" + self.barcode_data["DigiKeyPartNumber"],
+                    ]
+
+                    # Add GS delimiters and EOT at the end
+                    self.part_barcode = "\x1d".join(new_code) + "\x04"
+                    self.part_number = self.barcode_data["DigiKeyPartNumber"]
+                    self.manu_number = self.barcode_data["ManufacturerPartNumber"]
+                    self.salesorder_id = int(self.barcode_data["SalesorderId"])
+                    self.invoice_id = int(self.barcode_data["InvoiceId"])
+                    self.purchase_order = self.barcode_data["PurchaseOrder"]
+                    self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
+                    self.quantity = int(self.barcode_data["Quantity"])
+
+                except (ValueError, KeyError):
+                    raise ValidationError({self.scan_barcode: "Error processing barcode"})
 
         return True
 
     def getStockItem(self):
         part_number_none = False
         company = None
-        try:
-            company = Company.objects.get(name="DigiKey")
-        except (ValueError, Company.DoesNotExist):
-            if self.debug:
-                print("No Company Found")
+
+        if self.batch_id is None:
             return None
         
         if self.debug:
             print("Getting Stock Info")
 
         try:
-            if not self.part_number is None:
+            if self.part_number is not None:
                 try:
                     supplier_part = SupplierPart.objects.get(SKU=self.part_number)
                     return StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.batch_id)
@@ -341,6 +346,12 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                     part_number_none = True
                    
             if not self.manu_number is None:
+                try:
+                    company = Company.objects.get(name="DigiKey")
+                except (ValueError, Company.DoesNotExist):
+                    if self.debug:
+                        print("No Company Found")
+                    return None
                 try:
                     supplier_part = SupplierPart.objects.get(MPN=self.manu_number,supplier=company)
                     return StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.batch_id)
@@ -374,17 +385,19 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         except (ValueError, SupplierPart.DoesNotExist):
             return None
 
-        if "Quantity" in self.part_data and "SalesorderId" in self.part_data and "InvoiceId" in self.part_data and self.quantity > 0:
-            try:
-                stock = StockModels.StockItem.objects.get(part=supplierPart.part,batch=self.batch_id)
-            except (ValueError, StockItem.DoesNotExist):
-                stock = StockModels.StockItem.objects.create(
-                    part = supplierPart.part,
-                    supplier_part = supplierPart,
-                    batch = self.batch_id,
-                    quantity = self.quantity,
-                )
-                stock.save(user=request)
+        if self.quantity <= 0 or self.batch_id == '':
+            return None
+
+        try:
+            stock = StockModels.StockItem.objects.get(part=supplierPart.part,batch=self.batch_id)
+        except (ValueError, StockItem.DoesNotExist):
+            stock = StockModels.StockItem.objects.create(
+                part = supplierPart.part,
+                supplier_part = supplierPart,
+                batch = self.batch_id,
+                quantity = self.quantity,
+            )
+            stock.save(user=request)
 
         return stock
 
@@ -438,34 +451,26 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.debug:
                 print("No Company Found")
             return None
-        
-        # Try get Manu before Create Manu
-        if not self.part_data["ManufacturerName"] is None:
-            try:
-                manufacturer = Company.objects.get(name=self.part_data["ManufacturerName"])
-            except (ValueError, Company.DoesNotExist):
-                manufacturer = Company.objects.create( 
-                    name=self.part_data["ManufacturerName"],
-                    is_customer = False,
-                    is_supplier = False,
-                    is_manufacturer = True
-                )
-                manufacturer.save() #user=request)
     
-        if not self.part_number is None and not self.manu_number is None:
+        if self.part_number is not None and self.manu_number is not None:
             # Try get Part before Create Part
             try:
                 part = Part.objects.get(name=self.manu_number)
             except (ValueError, Part.DoesNotExist):
                 newPart = True
+
+                if self.part_data is None:
+                    self.part_data = self.get_part_details(self.part_number)
+
                 part = Part.objects.create(
                     name=self.manu_number,
-                    description=self.part_data["ProductDescription"],
+                    description=self.part_data["DetailedDescription"],
                     component=True,
                     purchaseable=True,
                     trackable=False,
                     active=True,
-                    virtual=False
+                    virtual=False,
+                    link=self.part_data["PrimaryDatasheet"]
                 )
                 part.save() #user=request)
             
@@ -473,12 +478,30 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             try:
                 supplierPart = SupplierPart.objects.get(MPN=self.manu_number)
             except (ValueError, SupplierPart.DoesNotExist):
+                try:
+                    if self.part_data is None:
+                        self.part_data = self.get_part_details(self.part_number)
+
+                    manufacturer = Company.objects.get(name=self.part_data["Manufacturer"]["Value"])
+                except KeyError:
+                    if self.debug:
+                        print("Error in digikey data?")
+                except (ValueError, Company.DoesNotExist):
+                    manufacturer = Company.objects.create( 
+                        name=self.part_data["Manufacturer"]["Value"],
+                        is_customer = False,
+                        is_supplier = False,
+                        is_manufacturer = True
+                    )
+                    manufacturer.save() #user=request)
+
                 supplierPart = SupplierPart.objects.create(
                     part = part,
                     SKU = self.part_number,
                     MPN = self.manu_number,
                     supplier = company,
-                    manufacturer = manufacturer
+                    manufacturer = manufacturer,
+                    link = self.part_data["ProductUrl"]
                 )
                 supplierPart.save() #user=request)
             

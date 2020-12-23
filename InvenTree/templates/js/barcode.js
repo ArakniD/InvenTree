@@ -49,66 +49,41 @@ function clearBarcodeError(modal, message) {
 }
 
 
-function enableBarcodeInput(modal, enabled=true) {
 
-    var barcode = $(modal + ' #barcode');
+function enableBarcodeInput(modal, enabled = true) {
+    const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
+    const barcode = $(modal + ' #barcode');
 
     barcode.prop('disabled', !enabled);
-    
+
     modalEnable(modal, enabled);
 
-    barcodeScanner(modal, !enabled);
+    // Enable scanning
+    if (!enabled) {
+        const previewElem = document.getElementById('barcode-webcam');
+
+        const controls = codeReader.decodeFromVideoDevice(undefined, previewElem, (result, error, controls) => {
+            // use the result and error values to choose your actions
+            // you can also use controls API in this scope like the controls
+            // returned from the method.
+            if (result) {
+                modal = modal || '#modal-form';
+                var el = $(modal + ' #barcode');
+                el.val(result.text);
+
+                controls.stop()
+
+                console.log(result.text)
+
+                sendBarcode()
+            } else if (barcode.prop('disabled') == true) {
+                controls.stop()
+            }
+        })
+        console.log('ZXing code reader initialized')
+    } 
 
     barcode.focus();
-}
-
-function recreateNode(el, withChildren) {
-  if (withChildren) {
-    el.parentNode.replaceChild(el.cloneNode(true), el);
-  }
-  else {
-    var newEl = el.cloneNode(false);
-    while (el.hasChildNodes()) newEl.appendChild(el.firstChild);
-    el.parentNode.replaceChild(newEl, el);
-  }
-}
-
-const codeReader =  new ZXingBrowser.BrowserMultiFormatReader();
-
-function barcodeScanner(modal, enable) {
-
-    if (enable) {
-		document.getElementById('startButton').addEventListener('click', () => {
-			const previewElem = document.getElementById('barcode-webcam');
-			
-			// you can use the controls to stop() the scan or switchTorch() if available
-			codeReader.decodeFromVideoDevice(undefined, previewElem, (result, error, controls) => {
-				// use the result and error values to choose your actions
-				// you can also use controls API in this scope like the controls
-				// returned from the method.
-				if (result) {
-					modal = modal || '#modal-form';
-					var el = $(modal + ' #barcode');
-					var barcode = el.val(result.text);
-
-					console.log(result)
-					
-					options.onScan(result.text)
-                		}
-				
-			});
-			console.log('ZXing code reader initialized')
-		})
-		document.getElementById('resetButton').addEventListener('click', () => {
-			modal = modal || '#modal-form';
-			var el = $(modal + ' #barcode');
-			var barcode = el.val('');
-			console.log('stopping scanner')
-			//codeReader.stop()
-		})
-    } else if (codeReader) {
-        //codeReader.stop()
-    }
 }
 
 function getBarcodeData(modal) {
@@ -177,7 +152,9 @@ function barcodeDialog(title, options={}) {
         if (options.onShow) {
             options.onShow();
         }
-    })
+
+    });
+
     modalSetTitle(modal, title);
 
     if (options.onSubmit) {
@@ -186,33 +163,31 @@ function barcodeDialog(title, options={}) {
         modalShowSubmitButton(modal, false);
     }
 
-    barcodeScanner(modal, false)
-
     var content = '';
 
-    content += `<div class='alert alert-info alert-block'>Scan barcode data below</div>`;
+    content += `<div class='alert alert-info alert-block'>{% trans "Scan barcode data below" %}</div>`;
     
     content += `<div id='barcode-error-message'></div>`;
-    content += `<div><a class="button" id="startButton">Start</a><a class="button" id="resetButton">Reset</a></div>`;
     
     content += `<style>`;
     content += `#interactive.viewport {`;
- content += `	position: relative;`;
- content += `}`;
- content += `#interactive.viewport > canvas, #interactive.viewport > video {`;
- content += `	max-width: 100%;`;
- content += `	width: 100%;`;
- content += `}`;
- content += `@media (-webkit-video-playable-inline) {`;
- content += `	#interactive img { display: none; }`;
- content += `	#interactive video { display: initial; }`;
- content += `}`;
- content += `</style>`;
- content += `<div id="interactive" class="viewport">`;
- content += `	<video id="barcode-webcam" autoplay="true" preload="auto" src="" playsinline></video>`;
- content += `</div>`;	
+    content += `	position: relative;`;
+    content += `}`;
+    content += `#interactive.viewport > canvas, #interactive.viewport > video {`;
+    content += `	max-width: 100%;`;
+    content += `	width: 100%;`;
+    content += `}`;
+    content += `@media (-webkit-video-playable-inline) {`;
+    content += `	#interactive img { display: none; }`;
+    content += `	#interactive video { display: initial; }`;
+    content += `}`;
+    content += `</style>`;
+    content += `<div id="interactive" class="viewport">`;
+    content += `	<video id="barcode-webcam" autoplay="true" preload="auto" src="" playsinline></video>`;
+    content += `</div>`;	
 	
     content += `<form class='js-modal-form' method='post'>`;
+    
 	// Optional content before barcode input
     content += `<div class='container' id='barcode-header'>`;
     content += options.headerContent || '';
@@ -243,8 +218,6 @@ function barcodeDialog(title, options={}) {
     }
 
     $(modal).modal('show');
-
-    barcodeScanner(modal,true);
 }
 
 
