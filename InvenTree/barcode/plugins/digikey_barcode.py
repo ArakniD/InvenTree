@@ -25,13 +25,13 @@ from rest_framework.exceptions import ValidationError
 DEFAULT_API_URL = "api.digikey.com"
 
 known_dis = {
-    "K": "Customer PO Number",
-    "1K": "Supplier Order Number",
-    "10K": "Invoice Number",
-    "P": "Part No.",
-    "1P": "Supplier Part Number",
+    "K": "CustomerPONumber",
+    "1K": "SupplierOrderNumber",
+    "10K": "InvoiceNumber",
+    "P": "CustRef",
+    "1P": "ManuPartNumber",
     "Q": "Quantity",
-    "4L": "Country of Origin",
+    "4L": "CountryofOrigin",
 }
 
 class DigikeyBarcodePlugin(BarcodePlugin):
@@ -65,6 +65,8 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         self.salesorder_id = None
         self.invoice_id = None
         self.purchase_order = None
+        self.part_number = None
+        self.manu_number = None
         self.batch_id = ""
         self.quantity = 0
         self.__update_config()
@@ -127,11 +129,30 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
     def process_barcode(self, barcode):
         barcode_1d_re = re.compile("^[0-9]+$")
+        data = None
 
         if barcode_1d_re.match(barcode):
-            return self.process_1d_barcode(barcode)
+            data= self.process_1d_barcode(barcode)
         else:
-            return self.process_2d_barcode(barcode)
+            data= self.process_2d_barcode(barcode)
+
+        if data is not None:
+            new_code = [
+                        "[)>\x1e06",
+                        "1P" + data["ManufacturerPartNumber"],
+                        "P" + data["DigiKeyPartNumber"],
+                    ]
+
+                    # Add GS delimiters and EOT at the end
+            self.part_barcode = "\x1d".join(new_code) + "\x04"
+            self.part_number = data["DigiKeyPartNumber"]
+            self.manu_number = data["ManufacturerPartNumber"]
+            self.salesorder_id = int(data["SalesorderId"])
+            self.invoice_id = int(data["InvoiceId"])
+            self.purchase_order = data["PurchaseOrder"]
+            self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
+            self.quantity = int(data["Quantity"])
+        return data
 
     def process_1d_barcode(self, barcode):
         self.__update_config()
@@ -203,7 +224,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         if not iso_iec_15434_start.match(barcode):
             raise ValueError({barcode, "Not an ISO IEC 15434 Code"})
 
-        self.fields = {}
+        fields = {}
         sections = barcode.split(self.gs_str)
         for section in sections[1:]:
             match = ansi_mh10_8_2_item.match(section)
@@ -212,13 +233,16 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 value = match.group("value")
 
                 if di in known_dis:
-                    self.fields[known_dis[di]] = value
+                    fields[known_dis[di]] = value
                 elif self.debug:
                     print("NEW DI!", di, value)
             elif self.debug:
                 print("Invalid section", section)
 
-        return self.fields
+        if self.debug:
+            print(fields)
+
+        return fields
 
     def get_part_details(self, part_no):
         self.__update_config()
@@ -226,17 +250,16 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         conn = http.client.HTTPSConnection(self.api_url)
 
         # TODO - escape part_no quotes
-        payload = '{"Keywords": "' + part_no + '","RecordCount": "50"}'
+        # payload = '{"Keywords": "' + part_no + '","RecordCount": "50"}'
 
         headers = {
             "x-DIGIKEY-client-id": self.client_id,
             "authorization": "Bearer " + self.access_token,
-            "content-type": "application/json",
             "accept": "application/json",
         }
 
         conn.request(
-            "POST", "/Search/v3/Products/Keyword", payload.encode("utf-8"), headers
+            "GET", "/Search/v3/Products/" + part_no, None, headers
         )
 
         res = conn.getresponse()
@@ -247,7 +270,13 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.debug:
                 print("Unauthorized! Need to refresh token.")
             return None
+        elif "StatusCode" in data and data["StatusCode"] != 200:
+            if self.debug:
+                print(data)
+            return None
         else:
+            if self.debug:
+                print(data)
             return data
         
     def validate(self):
@@ -270,8 +299,8 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             if self.part_data is None:
                 return False
 
-            self.manu_number=part_data["ManufacturerPartNumber"]
-            self.part_number=part_data["DigiKeyPartNumber"]
+            self.manu_number=self.part_data["ManufacturerPartNumber"]
+            self.part_number=self.part_data["DigiKeyPartNumber"]
             
         else:
             if type(self.data) is dict and 'barcode' in self.data:
@@ -286,15 +315,18 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             try:
                
                 # Try to decode barcode to see if it's a valid 2d barcode
-                fields = self.decode_2d_barcode(barcode)
+                self.fields = self.decode_2d_barcode(barcode)
 
-                self.purchase_order = fields["Customer PO Number"]
-                self.salesorder_id = fields["Supplier Order Number"]
-                self.invoice_id = fields["Invoice Number"]
-                self.part_number = fields["Part No."]
-                self.manu_number = fields["Supplier Part Number"]
-                self.quantity = int(fields["Quantity"])
-                self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
+                if "CustomerPONumber" in self.fields:
+                    self.purchase_order = self.fields["CustomerPONumber"]
+                if "SupplierOrderNumber" in self.fields and "InvoiceNumber" in self.fields:
+                    self.salesorder_id = self.fields["SupplierOrderNumber"]
+                    self.invoice_id = self.fields["InvoiceNumber"]
+                    self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
+                if "CustRef" in self.fields:
+                    self.sales_note = self.fields["CustRef"]
+                self.manu_number = self.fields["ManuPartNumber"]
+                self.quantity = int(self.fields["Quantity"])
 
             except (ValueError, KeyError):
                 try:
@@ -305,22 +337,6 @@ class DigikeyBarcodePlugin(BarcodePlugin):
 
                     if self.debug:
                         print(self.barcode_data)
-
-                    new_code = [
-                        "[)>\x1e06",
-                        "1P" + self.barcode_data["ManufacturerPartNumber"],
-                        "P" + self.barcode_data["DigiKeyPartNumber"],
-                    ]
-
-                    # Add GS delimiters and EOT at the end
-                    self.part_barcode = "\x1d".join(new_code) + "\x04"
-                    self.part_number = self.barcode_data["DigiKeyPartNumber"]
-                    self.manu_number = self.barcode_data["ManufacturerPartNumber"]
-                    self.salesorder_id = int(self.barcode_data["SalesorderId"])
-                    self.invoice_id = int(self.barcode_data["InvoiceId"])
-                    self.purchase_order = self.barcode_data["PurchaseOrder"]
-                    self.batch_id = f'{self.salesorder_id}' + "-" + f'{self.invoice_id}'
-                    self.quantity = int(self.barcode_data["Quantity"])
 
                 except (ValueError, KeyError):
                     raise ValidationError({self.scan_barcode: "Error processing barcode"})
@@ -338,20 +354,21 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             print("Getting Stock Info")
 
         try:
+            company = Company.objects.get(name="DigiKey")
+        except (ValueError, Company.DoesNotExist):
+            if self.debug:
+                print("No Company Found")
+            return None
+
+        try:
             if self.part_number is not None:
                 try:
-                    supplier_part = SupplierPart.objects.get(SKU=self.part_number)
+                    supplier_part = SupplierPart.objects.get(SKU=self.part_number,supplier=company)
                     return StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.batch_id)
                 except (ValueError, SupplierPart.DoesNotExist):
                     part_number_none = True
                    
             if not self.manu_number is None:
-                try:
-                    company = Company.objects.get(name="DigiKey")
-                except (ValueError, Company.DoesNotExist):
-                    if self.debug:
-                        print("No Company Found")
-                    return None
                 try:
                     supplier_part = SupplierPart.objects.get(MPN=self.manu_number,supplier=company)
                     return StockModels.StockItem.objects.get(part=supplier_part.part,batch=self.batch_id)
@@ -381,7 +398,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
     
      # Try get SupplierPart before create SupplierPart
         try:
-            supplierPart = SupplierPart.objects.get(MPN=self.manu_number)
+            supplierPart = SupplierPart.objects.get(MPN=self.manu_number, supplier=company)
         except (ValueError, SupplierPart.DoesNotExist):
             return None
 
@@ -396,6 +413,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 supplier_part = supplierPart,
                 batch = self.batch_id,
                 quantity = self.quantity,
+                notes = self.sales_note
             )
             stock.save(user=request)
 
@@ -415,7 +433,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
         
         if not self.part_number is None:
             try:
-                supplier_part = SupplierPart.objects.get(SKU=self.part_number)
+                supplier_part = SupplierPart.objects.get(SKU=self.part_number,supplier=company)
             except (ValueError, SupplierPart.DoesNotExist):
                 part_number_none = True
                
@@ -452,12 +470,15 @@ class DigikeyBarcodePlugin(BarcodePlugin):
                 print("No Company Found")
             return None
     
-        if self.part_number is not None and self.manu_number is not None:
+        if self.part_number is not None or self.manu_number is not None:
             # Try get Part before Create Part
             try:
                 part = Part.objects.get(name=self.manu_number)
             except (ValueError, Part.DoesNotExist):
                 newPart = True
+
+                if self.barcode_data is None:
+                    self.barcode_data = self.process_barcode(self.scan_barcode)
 
                 if self.part_data is None:
                     self.part_data = self.get_part_details(self.part_number)
@@ -476,9 +497,12 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             
             # Try get SupplierPart before create SupplierPart
             try:
-                supplierPart = SupplierPart.objects.get(MPN=self.manu_number)
+                supplierPart = SupplierPart.objects.get(MPN=self.manu_number, supplier=company)
             except (ValueError, SupplierPart.DoesNotExist):
                 try:
+                    if self.barcode_data is None:
+                        self.barcode_data = self.process_barcode(self.scan_barcode)
+
                     if self.part_data is None:
                         self.part_data = self.get_part_details(self.part_number)
 
@@ -525,7 +549,7 @@ class DigikeyBarcodePlugin(BarcodePlugin):
             
         if not self.part_number is None:
             try:
-                supplier_part = SupplierPart.objects.get(SKU=self.part_number)
+                supplier_part = SupplierPart.objects.get(SKU=self.part_number,supplier=company)
                 return supplier_part.part
             except (ValueError, SupplierPart.DoesNotExist):
                 part_number_none = True

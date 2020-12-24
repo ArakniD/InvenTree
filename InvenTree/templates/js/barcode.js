@@ -48,40 +48,12 @@ function clearBarcodeError(modal, message) {
     $(modal + ' #barcode-error-message').html('');
 }
 
-
-
 function enableBarcodeInput(modal, enabled = true) {
-    const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
-    const barcode = $(modal + ' #barcode');
+    barcode = $(modal + ' #barcode');
 
     barcode.prop('disabled', !enabled);
 
     modalEnable(modal, enabled);
-
-    // Enable scanning
-    if (!enabled) {
-        const previewElem = document.getElementById('barcode-webcam');
-
-        const controls = codeReader.decodeFromVideoDevice(undefined, previewElem, (result, error, controls) => {
-            // use the result and error values to choose your actions
-            // you can also use controls API in this scope like the controls
-            // returned from the method.
-            if (result) {
-                modal = modal || '#modal-form';
-                var el = $(modal + ' #barcode');
-                el.val(result.text);
-
-                controls.stop()
-
-                console.log(result.text)
-
-                sendBarcode()
-            } else if (barcode.prop('disabled') == true) {
-                controls.stop()
-            }
-        })
-        console.log('ZXing code reader initialized')
-    } 
 
     barcode.focus();
 }
@@ -99,6 +71,8 @@ function getBarcodeData(modal) {
 
     return barcode.trim();
 }
+
+const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
 
 function barcodeDialog(title, options={}) {
     /*
@@ -216,11 +190,36 @@ function barcodeDialog(title, options={}) {
     if (options.preShow) {
         options.preShow();
     }
+	
+	if (options.enableScanner) {
+		const barcode = $(modal + ' #barcode');
+		
+		const previewElem = document.getElementById('barcode-webcam');
 
+		const controls = codeReader.decodeFromVideoDevice(undefined, previewElem, (result, error, controls) => {
+			// use the result and error values to choose your actions
+			// you can also use controls API in this scope like the controls
+			// returned from the method.
+			if (result) {
+				barcode.val(result.text);
+
+				controls.stop()
+
+				console.log(result.text)
+
+				if (options.onScan) {
+                    			options.onScan(result.text);
+                		}
+			} else {
+				if (previewElem.hidden || modal.hidden) {
+					controls.stop()
+				}
+			}
+		})
+		console.log('ZXing code reader initialized')
+	}
     $(modal).modal('show');
 }
-
-
 
 function barcodeScanDialog() {
     /*
@@ -233,6 +232,7 @@ function barcodeScanDialog() {
     barcodeDialog(
         "Scan Barcode",
         {
+	    enableScanner: true,
             onScan: function(barcode) {
                 enableBarcodeInput(modal, false);
                 inventreePut(
@@ -245,7 +245,7 @@ function barcodeScanDialog() {
                         success: function(response, status) {
 
                             enableBarcodeInput(modal, true);
-
+							
                             if (status == 'success') {
                                 
                                 if ('success' in response) {
